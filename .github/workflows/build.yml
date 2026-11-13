@@ -42,14 +42,14 @@ jobs:
             sed -i -E "s/(APP_HASH = )\"[^\"]*\";/\1\"${TG_API_HASH}\";/" "$F"
           fi
 
-      - name: Rename app to Trust Gram
+      - name: Rename app to TrustGram
         run: |
           for dir in TMessagesProj TMessagesProj_App TMessagesProj_AppHuawei TMessagesProj_AppStandalone; do
             [ -d "$dir" ] || continue
-            # Resource strings: sirf text content badlo, key names aur URLs nahi
-            find "$dir" -path '*/res/*' -name "strings*.xml" -exec sed -i -E '/https?:\/\//!{:a;s/(>[^<]*)Telegram/\1Trust Gram/;ta}' {} +
-            # Java code ke string literals: "Telegram" se shuru hone wale
-            find "$dir" -name "*.java" -exec sed -i -E 's/"Telegram([ "])/"Trust Gram\1/g' {} +
+            # Resource strings: sirf text badlo, URL wali lines nahi
+            find "$dir" -path '*/res/*' -name "*.xml" -exec sed -i -E '/https?:\/\//!{:a;s/(>[^<]*)Telegram/\1TrustGram/;ta}' {} +
+            # Java string literals jo "Telegram" se shuru hon
+            find "$dir" -name "*.java" -exec sed -i -E 's/"Telegram([^A-Za-z0-9_\/])/"TrustGram\1/g' {} +
           done
 
       - name: Replace app logo
