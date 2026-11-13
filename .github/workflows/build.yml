@@ -52,6 +52,11 @@ jobs:
             find "$dir" -name "*.java" -exec sed -i -E 's/"Telegram([^A-Za-z0-9_\/])/"TrustGram\1/g' {} +
           done
 
+      - name: Install ImageMagick
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y imagemagick
+
       - name: Replace app logo
         run: |
           if [ ! -f trustgram_logo.png ]; then
