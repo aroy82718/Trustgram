@@ -42,9 +42,15 @@ jobs:
             sed -i -E "s/(APP_HASH = )\"[^\"]*\";/\1\"${TG_API_HASH}\";/" "$F"
           fi
 
-      - name: Rename app to TrustGram
+      - name: Rename app to Trust Gram
         run: |
-          find TMessagesProj/src/main/res -name "strings*.xml" -exec sed -i -E '/https?:\/\//!s/Telegram/TrustGram/g' {} +
+          for dir in TMessagesProj TMessagesProj_App TMessagesProj_AppHuawei TMessagesProj_AppStandalone; do
+            [ -d "$dir" ] || continue
+            # Resource strings: sirf text content badlo, key names aur URLs nahi
+            find "$dir" -path '*/res/*' -name "strings*.xml" -exec sed -i -E '/https?:\/\//!{:a;s/(>[^<]*)Telegram/\1Trust Gram/;ta}' {} +
+            # Java code ke string literals: "Telegram" se shuru hone wale
+            find "$dir" -name "*.java" -exec sed -i -E 's/"Telegram([ "])/"Trust Gram\1/g' {} +
+          done
 
       - name: Replace app logo
         run: |
@@ -53,7 +59,6 @@ jobs:
             exit 0
           fi
           RES=TMessagesProj/src/main/res
-          # Adaptive icon XML hatao, taaki PNG icon dikhe
           rm -rf "$RES/mipmap-anydpi-v26" "$RES/mipmap-anydpi"
           for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
             name=${d%%:*}
