@@ -2,34 +2,53 @@ name: Build APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [master]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 90
 
-      - uses: actions/setup-java@v4
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
+
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: Set API credentials
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
         run: |
           F=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
-          sed -i "s/APP_ID = [0-9]*;/APP_ID = ${{ secrets.TG_API_ID }};/" $F
-          sed -i "s/APP_HASH = \"[^\"]*\";/APP_HASH = \"${{ secrets.TG_API_HASH }}\";/" $F
+          if [ -n "$TG_API_ID" ]; then
+            sed -i -E "s/(APP_ID = )[0-9]+;/\1${TG_API_ID};/" "$F"
+          fi
+          if [ -n "$TG_API_HASH" ]; then
+            sed -i -E "s/(APP_HASH = )\"[^\"]*\";/\1\"${TG_API_HASH}\";/" "$F"
+          fi
 
-      - name: Accept Android licenses
-        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-
-      - name: Build
+      - name: Build release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleAfatDebug --no-daemon
+          ./gradlew :TMessagesProj_App:assembleRelease --no-daemon --stacktrace
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: app-apk
+          name: Trustgram-APK
           path: "**/build/outputs/apk/**/*.apk"
+          if-no-files-found: error
