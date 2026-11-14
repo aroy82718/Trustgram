@@ -136,9 +136,78 @@ jobs:
 
           print(f"Renamed Telegram -> AuraGram in {changed} files")
           EOF
-          RES=TMessagesProj/src/main/res
-          sed -i -E 's#(<string name="Page1Title"[^>]*>)[^<]*(</string>)#\1AuraGram\2#' "$RES/values/strings.xml"
-          grep -n 'Page1Title' "$RES/values/strings.xml" || true
+          find TMessagesProj -path '*/res/values*' -name '*.xml' -exec sed -i -E 's#(<string name="Page1Title"[^>]*>)[^<]*(</string>)#\1AuraGram\2#' {} +
+
+      - name: Brand everywhere (runtime name + skip intro)
+        run: |
+          python3 - <<'EOF'
+          import pathlib, re
+
+          def match_brace(s, open_idx):
+              depth = 0
+              for i in range(open_idx, len(s)):
+                  if s[i] == '{':
+                      depth += 1
+                  elif s[i] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return i
+              return -1
+
+          lc = pathlib.Path('TMessagesProj/src/main/java/org/telegram/messenger/LocaleController.java')
+          src = lc.read_text(encoding='utf-8', errors='ignore')
+          patched = 0
+          if 'fixBrand(' not in src:
+              for m in list(re.finditer(r'String\s+getStringInternal\s*\([^)]*\)\s*\{', src))[::-1]:
+                  start = m.end() - 1
+                  end = match_brace(src, start)
+                  if end < 0:
+                      continue
+                  body = src[start:end + 1]
+                  nb = re.sub(r'return\s+value\s*;', 'return fixBrand(value);', body)
+                  if nb != body:
+                      src = src[:start] + nb + src[end + 1:]
+                      patched += 1
+              for m in list(re.finditer(r'String\s+formatString\s*\([^)]*\)\s*\{', src))[::-1]:
+                  start = m.end() - 1
+                  end = match_brace(src, start)
+                  if end < 0:
+                      continue
+                  body = src[start:end + 1]
+                  nb = re.sub(r',\s*value\s*,\s*args', ', fixBrand(value), args', body)
+                  nb = re.sub(r'\(\s*value\s*,\s*args', '(fixBrand(value), args', nb)
+                  if nb != body:
+                      src = src[:start] + nb + src[end + 1:]
+                      patched += 1
+              helper = '''
+              public static String fixBrand(String s) {
+                  if (s == null || s.indexOf("Telegram") < 0) return s;
+                  String l = s.toLowerCase();
+                  if (l.contains("telegram.org") || l.contains("t.me/") || l.contains("://")) return s;
+                  return s.replace("Telegram", "AuraGram");
+              }
+              '''
+              idx = src.rfind('}')
+              src = src[:idx] + helper + '\n' + src[idx:]
+              lc.write_text(src, encoding='utf-8')
+          print('LocaleController patched methods:', patched)
+          print('PATCH OK (name)' if patched else 'PATCH FAILED (name) - LocaleController.java ka structure alag hai')
+
+          la = pathlib.Path('TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java')
+          t = la.read_text(encoding='utf-8', errors='ignore')
+          m = re.search(r'getClientNotActivatedFragment\s*\(\s*\)\s*\{', t)
+          done = False
+          if m:
+              start = m.end() - 1
+              end = match_brace(t, start)
+              body = t[start:end + 1]
+              nb = re.sub(r'return\s+new\s+IntroActivity\s*\(\s*\)\s*;', 'return new LoginActivity();', body)
+              if nb != body:
+                  t = t[:start] + nb + t[end + 1:]
+                  la.write_text(t, encoding='utf-8')
+                  done = True
+          print('PATCH OK (intro skipped)' if done else 'PATCH FAILED (intro) - getClientNotActivatedFragment nahi mila')
+          EOF
 
       - name: Install ImageMagick
         run: |
@@ -164,28 +233,49 @@ jobs:
                   if p.exists():
                       subprocess.run(["rm", "-rf", str(p)])
 
-          logo_names = re.compile(
-              r'^(ic_launcher.*|ic_launcher_round.*|intro_tg_sphere.*|telegram_logo.*|logo_telegram.*|'
-              r'ic_telegram.*|telegram_icon.*|telegram_splash.*|splash_telegram.*)$')
-          plane_names = re.compile(r'^intro_tg_plane.*$')
-          notif_names = re.compile(r'.*(notification|notify|ic_stat).*')
+          logo_re = re.compile(
+              r'^(ic_launcher.*|intro_tg_sphere.*|.*telegram.*logo.*|.*logo.*telegram.*|'
+              r'telegram_logo.*|ic_telegram.*|telegram_icon.*|telegram_splash.*|splash_telegram.*|'
+              r'ic_logo.*|app_icon.*|logo|logo_.*|ic_tg_logo.*|tg_logo.*|login_logo.*|about_logo.*)$')
+          plane_re = re.compile(r'^intro_tg_plane.*$')
+          exclude_re = re.compile(
+              r'.*(notification|notify|ic_stat|google|premium|star|fragment|ton|wallet|bank|'
+              r'huawei|apple|facebook|twitter|vk|sticker|emoji|bot).*')
 
-          replaced, others = [], []
+          replaced, vectors, others = [], [], []
           for rd in res_dirs:
-              for f in rd.rglob('*'):
-                  if not f.is_file() or f.suffix.lower() not in ('.png', '.webp', '.jpg'):
+              for f in sorted(rd.rglob('*')):
+                  if not f.is_file():
                       continue
                   stem = f.stem.lower()
-                  if notif_names.match(stem):
+                  ext = f.suffix.lower()
+                  if ext not in ('.png', '.webp', '.jpg', '.xml'):
                       continue
-                  is_logo = logo_names.match(stem)
-                  is_plane = plane_names.match(stem)
+                  if exclude_re.match(stem):
+                      continue
+                  is_logo = logo_re.match(stem)
+                  is_plane = plane_re.match(stem)
+
+                  if ext == '.xml':
+                      if not is_logo or stem.startswith('ic_launcher'):
+                          if 'telegram' in stem:
+                              others.append(str(f))
+                          continue
+                      head = f.read_text(encoding='utf-8', errors='ignore')[:400]
+                      if '<vector' in head or '<layer-list' in head or '<bitmap' in head:
+                          out = f.with_suffix('.png')
+                          subprocess.run(["convert", LOGO, "-resize", "512x512", "-background", "none",
+                                          "-gravity", "center", "-extent", "512x512", "PNG32:" + str(out)], check=True)
+                          f.unlink()
+                          vectors.append(str(f))
+                      continue
+
                   if not (is_logo or is_plane):
-                      if 'telegram' in stem:
+                      if 'telegram' in stem or stem.startswith('tg_') or '_tg_' in stem:
                           others.append(str(f))
                       continue
                   size = subprocess.check_output(["identify", "-format", "%wx%h", str(f) + "[0]"]).decode().strip()
-                  prefix = "PNG32:" if f.suffix.lower() == '.png' else ""
+                  prefix = "PNG32:" if ext == '.png' else ""
                   if is_plane:
                       cmd = ["convert", "-size", size, "xc:none", prefix + str(f)]
                   else:
@@ -194,13 +284,16 @@ jobs:
                   subprocess.run(cmd, check=True)
                   replaced.append(f"{f} ({size})")
 
-          # launcher round icon ke liye ic_launcher_round bhi ho, yeh upar cover hai
           print("--- replaced images ---")
           for r in replaced:
               print(r)
-          print("--- other telegram-named images (not replaced) ---")
+          print("--- replaced vector logos (xml -> png) ---")
+          for v in vectors:
+              print(v)
+          print("--- still telegram-ish files (not replaced) ---")
           for o in others:
               print(o)
+          print("TOTAL replaced:", len(replaced), "vectors:", len(vectors))
           EOF
 
       - name: Build release APK
