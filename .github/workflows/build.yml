@@ -42,6 +42,14 @@ jobs:
             sed -i -E "s/(APP_HASH = )\"[^\"]*\";/\1\"${TG_API_HASH}\";/" "$F"
           fi
 
+      - name: Change package name to org.auragram.app
+        run: |
+          for f in TMessagesProj_App*/build.gradle; do
+            [ -f "$f" ] && sed -i -E "s/(applicationId[ =(]+[\"'])org\.telegram\.messenger/\1org.auragram.app/" "$f"
+          done
+          find . -name google-services.json -not -path "./.git/*" -exec sed -i 's/org\.telegram\.messenger/org.auragram.app/g' {} +
+          grep -rn "applicationId" TMessagesProj_App*/build.gradle || true
+
       - name: Rename app to AuraGram everywhere
         run: |
           python3 - <<'EOF'
