@@ -42,15 +42,49 @@ jobs:
             sed -i -E "s/(APP_HASH = )\"[^\"]*\";/\1\"${TG_API_HASH}\";/" "$F"
           fi
 
-      - name: Rename app to TrustGram
+      - name: Rename app to AuraGram everywhere
         run: |
-          for dir in TMessagesProj TMessagesProj_App TMessagesProj_AppHuawei TMessagesProj_AppStandalone; do
-            [ -d "$dir" ] || continue
-            # Resource strings: sirf text badlo, URL wali lines nahi
-            find "$dir" -path '*/res/*' -name "*.xml" -exec sed -i -E '/https?:\/\//!{:a;s/(>[^<]*)Telegram/\1TrustGram/;ta}' {} +
-            # Java string literals jo "Telegram" se shuru hon
-            find "$dir" -name "*.java" -exec sed -i -E 's/"Telegram([^A-Za-z0-9_\/])/"TrustGram\1/g' {} +
-          done
+          python3 - <<'EOF'
+          import pathlib, re
+
+          roots = ["TMessagesProj", "TMessagesProj_App", "TMessagesProj_AppHuawei",
+                   "TMessagesProj_AppStandalone", "TMessagesProj_AppHockeyApp"]
+          word = re.compile(r'\bTelegram\b')
+          literal = re.compile(r'"(?:[^"\\\n]|\\.)*"')
+          changed = 0
+
+          for root in roots:
+              base = pathlib.Path(root)
+              if not base.exists():
+                  continue
+              for f in base.rglob("*"):
+                  if not f.is_file():
+                      continue
+                  path = f.as_posix()
+                  if f.suffix == ".xml" and "/res/" in path:
+                      text = f.read_bytes().decode("utf-8", "ignore")
+                      out = []
+                      for ln in text.split("\n"):
+                          low = ln.lower()
+                          if "http" in low or "xmlns" in low or "telegram.org" in low:
+                              out.append(ln)
+                          else:
+                              out.append(word.sub("AuraGram", ln))
+                      new = "\n".join(out)
+                  elif f.suffix == ".java":
+                      text = f.read_bytes().decode("utf-8", "ignore")
+                      new = literal.sub(
+                          lambda m: m.group(0) if "http" in m.group(0)
+                          else word.sub("AuraGram", m.group(0)),
+                          text)
+                  else:
+                      continue
+                  if new != text:
+                      f.write_bytes(new.encode("utf-8"))
+                      changed += 1
+
+          print(f"Renamed Telegram -> AuraGram in {changed} files")
+          EOF
 
       - name: Install ImageMagick
         run: |
@@ -59,8 +93,8 @@ jobs:
 
       - name: Replace app logo
         run: |
-          if [ ! -f trustgram_logo.png ]; then
-            echo "trustgram_logo.png nahi mila, logo step skip"
+          if [ ! -f auragram_logo.png ]; then
+            echo "auragram_logo.png nahi mila, logo step skip"
             exit 0
           fi
           RES=TMessagesProj/src/main/res
@@ -70,7 +104,7 @@ jobs:
             size=${d##*:}
             out="$RES/mipmap-${name}"
             mkdir -p "$out"
-            convert trustgram_logo.png -resize "${size}x${size}" "$out/ic_launcher.png"
+            convert auragram_logo.png -resize "${size}x${size}" "$out/ic_launcher.png"
             cp "$out/ic_launcher.png" "$out/ic_launcher_round.png"
           done
 
@@ -82,6 +116,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TrustGram-APK
+          name: AuraGram-APK
           path: "**/build/outputs/apk/**/*.apk"
           if-no-files-found: error
