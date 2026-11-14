@@ -50,6 +50,18 @@ jobs:
           find . -name google-services.json -not -path "./.git/*" -exec sed -i 's/org\.telegram\.messenger/org.auragram.app/g' {} +
           grep -rn "applicationId" TMessagesProj_App*/build.gradle || true
 
+      - name: Disable Firebase google-services plugin
+        run: |
+          python3 - <<'EOF'
+          import pathlib, re
+          for f in pathlib.Path('.').glob('TMessagesProj_App*/build.gradle'):
+              t = f.read_text(encoding='utf-8', errors='ignore')
+              n = re.sub(r'(?m)^(\s*)((apply plugin:|id)\s*\(?\s*["\']com\.google\.gms\.google-services["\'].*)$', r'\1// \2', t)
+              if n != t:
+                  f.write_text(n, encoding='utf-8')
+                  print('disabled google-services in', f)
+          EOF
+
       - name: Rename app to AuraGram everywhere
         run: |
           python3 - <<'EOF'
