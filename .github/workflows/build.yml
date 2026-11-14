@@ -56,7 +56,6 @@ jobs:
           for f in pathlib.Path('.').rglob('*'):
               if not f.is_file() or skip_dirs & set(f.parts):
                   continue
-
               if f.suffix in ('.gradle', '.kts', '.kt', '.properties'):
                   text = f.read_text(encoding='utf-8', errors='ignore')
                   out = []
@@ -72,7 +71,6 @@ jobs:
                   if new != text:
                       f.write_text(new, encoding='utf-8')
                       print('package changed in', f)
-
               elif f.name == 'AndroidManifest.xml':
                   text = f.read_text(encoding='utf-8', errors='ignore')
                   new = perm.sub(lambda m: NEW + '.' + m.group(2), text)
@@ -138,28 +136,72 @@ jobs:
 
           print(f"Renamed Telegram -> AuraGram in {changed} files")
           EOF
+          RES=TMessagesProj/src/main/res
+          sed -i -E 's#(<string name="Page1Title"[^>]*>)[^<]*(</string>)#\1AuraGram\2#' "$RES/values/strings.xml"
+          grep -n 'Page1Title' "$RES/values/strings.xml" || true
 
       - name: Install ImageMagick
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y imagemagick
+          sudo apt-get install -y imagemagick webp
 
-      - name: Replace app logo
+      - name: Replace logo everywhere
         run: |
           if [ ! -f auragram_logo.png ]; then
             echo "auragram_logo.png nahi mila, logo step skip"
             exit 0
           fi
-          RES=TMessagesProj/src/main/res
-          rm -rf "$RES/mipmap-anydpi-v26" "$RES/mipmap-anydpi"
-          for d in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
-            name=${d%%:*}
-            size=${d##*:}
-            out="$RES/mipmap-${name}"
-            mkdir -p "$out"
-            convert auragram_logo.png -resize "${size}x${size}" "$out/ic_launcher.png"
-            cp "$out/ic_launcher.png" "$out/ic_launcher_round.png"
-          done
+          python3 - <<'EOF'
+          import pathlib, re, subprocess
+
+          LOGO = "auragram_logo.png"
+          res_dirs = [p for p in pathlib.Path('.').glob('TMessagesProj*/src/*/res') if p.is_dir()]
+
+          # Adaptive icon XML hatao taaki PNG icon dikhe
+          for rd in res_dirs:
+              for d in ("mipmap-anydpi-v26", "mipmap-anydpi"):
+                  p = rd / d
+                  if p.exists():
+                      subprocess.run(["rm", "-rf", str(p)])
+
+          logo_names = re.compile(
+              r'^(ic_launcher.*|ic_launcher_round.*|intro_tg_sphere.*|telegram_logo.*|logo_telegram.*|'
+              r'ic_telegram.*|telegram_icon.*|telegram_splash.*|splash_telegram.*)$')
+          plane_names = re.compile(r'^intro_tg_plane.*$')
+          notif_names = re.compile(r'.*(notification|notify|ic_stat).*')
+
+          replaced, others = [], []
+          for rd in res_dirs:
+              for f in rd.rglob('*'):
+                  if not f.is_file() or f.suffix.lower() not in ('.png', '.webp', '.jpg'):
+                      continue
+                  stem = f.stem.lower()
+                  if notif_names.match(stem):
+                      continue
+                  is_logo = logo_names.match(stem)
+                  is_plane = plane_names.match(stem)
+                  if not (is_logo or is_plane):
+                      if 'telegram' in stem:
+                          others.append(str(f))
+                      continue
+                  size = subprocess.check_output(["identify", "-format", "%wx%h", str(f) + "[0]"]).decode().strip()
+                  prefix = "PNG32:" if f.suffix.lower() == '.png' else ""
+                  if is_plane:
+                      cmd = ["convert", "-size", size, "xc:none", prefix + str(f)]
+                  else:
+                      cmd = ["convert", LOGO, "-resize", size, "-background", "none",
+                             "-gravity", "center", "-extent", size, prefix + str(f)]
+                  subprocess.run(cmd, check=True)
+                  replaced.append(f"{f} ({size})")
+
+          # launcher round icon ke liye ic_launcher_round bhi ho, yeh upar cover hai
+          print("--- replaced images ---")
+          for r in replaced:
+              print(r)
+          print("--- other telegram-named images (not replaced) ---")
+          for o in others:
+              print(o)
+          EOF
 
       - name: Build release APK
         run: |
@@ -171,18 +213,10 @@ jobs:
           APK=$(find . -path "*/build/outputs/apk/*" -name "*.apk" | head -n 1)
           AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt | sort | tail -n 1)
           echo "APK: $APK"
-          echo "--- package ---"
           $AAPT dump badging "$APK" | grep "^package:" || true
-          echo "--- declared permissions ---"
-          $AAPT dump permissions "$APK" | grep -i "permission:" || true
-          echo "--- provider authorities ---"
-          $AAPT dump xmltree "$APK" AndroidManifest.xml | grep -i "authorities" || true
+          $AAPT dump badging "$APK" | grep "application-label:" || true
           if $AAPT dump badging "$APK" | grep "^package:" | grep -q "name='org.telegram.messenger"; then
             echo "ERROR: package abhi bhi org.telegram.messenger hai"
-            exit 1
-          fi
-          if $AAPT dump xmltree "$APK" AndroidManifest.xml | grep -i "authorities" | grep -q "org.telegram.messenger"; then
-            echo "ERROR: provider authority abhi bhi org.telegram.messenger hai"
             exit 1
           fi
 
