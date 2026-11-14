@@ -44,11 +44,44 @@ jobs:
 
       - name: Change package name to org.auragram.app
         run: |
-          for f in TMessagesProj_App*/build.gradle; do
-            [ -f "$f" ] && sed -i -E "s/(applicationId[ =(]+[\"'])org\.telegram\.messenger/\1org.auragram.app/" "$f"
-          done
+          python3 - <<'EOF'
+          import pathlib, re
+
+          NEW = "org.auragram.app"
+          skip_dirs = {".git", "build", ".cxx", ".gradle"}
+          quoted = re.compile(r'(["\'])org\.telegram\.messenger(\.web|\.beta)?\1')
+          prop = re.compile(r'(=\s*)org\.telegram\.messenger(\.web|\.beta)?\s*$')
+          perm = re.compile(r'org\.telegram\.messenger(\.web|\.beta)?\.(permission|provider)')
+
+          for f in pathlib.Path('.').rglob('*'):
+              if not f.is_file() or skip_dirs & set(f.parts):
+                  continue
+
+              if f.suffix in ('.gradle', '.kts', '.kt', '.properties'):
+                  text = f.read_text(encoding='utf-8', errors='ignore')
+                  out = []
+                  for ln in text.split('\n'):
+                      if 'namespace' in ln or ln.lstrip().startswith(('package ', 'import ')):
+                          out.append(ln)
+                          continue
+                      ln = quoted.sub(lambda m: m.group(1) + NEW + m.group(1), ln)
+                      if f.suffix == '.properties':
+                          ln = prop.sub(lambda m: m.group(1) + NEW, ln)
+                      out.append(ln)
+                  new = '\n'.join(out)
+                  if new != text:
+                      f.write_text(new, encoding='utf-8')
+                      print('package changed in', f)
+
+              elif f.name == 'AndroidManifest.xml':
+                  text = f.read_text(encoding='utf-8', errors='ignore')
+                  new = perm.sub(lambda m: NEW + '.' + m.group(2), text)
+                  if new != text:
+                      f.write_text(new, encoding='utf-8')
+                      print('manifest permission/provider changed in', f)
+          EOF
           find . -name google-services.json -not -path "./.git/*" -exec sed -i 's/org\.telegram\.messenger/org.auragram.app/g' {} +
-          grep -rn "applicationId" TMessagesProj_App*/build.gradle || true
+          grep -rn "applicationId" --include=*.gradle --include=*.kts --include=*.kt . | grep -v "/build/" || true
 
       - name: Disable Firebase google-services plugin
         run: |
@@ -132,6 +165,26 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :TMessagesProj_App:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify package name
+        run: |
+          APK=$(find . -path "*/build/outputs/apk/*" -name "*.apk" | head -n 1)
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt | sort | tail -n 1)
+          echo "APK: $APK"
+          echo "--- package ---"
+          $AAPT dump badging "$APK" | grep "^package:" || true
+          echo "--- declared permissions ---"
+          $AAPT dump permissions "$APK" | grep -i "permission:" || true
+          echo "--- provider authorities ---"
+          $AAPT dump xmltree "$APK" AndroidManifest.xml | grep -i "authorities" || true
+          if $AAPT dump badging "$APK" | grep "^package:" | grep -q "name='org.telegram.messenger"; then
+            echo "ERROR: package abhi bhi org.telegram.messenger hai"
+            exit 1
+          fi
+          if $AAPT dump xmltree "$APK" AndroidManifest.xml | grep -i "authorities" | grep -q "org.telegram.messenger"; then
+            echo "ERROR: provider authority abhi bhi org.telegram.messenger hai"
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
